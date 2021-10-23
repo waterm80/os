@@ -21,7 +21,7 @@ typedef struct{
     int id, low, high;
 }task_t;
 
-int add_count;
+int n, len, add_count;
 queue<task_t> task_queue;
 vector<pair<int, int>> vec;
 pthread_mutex_t lock;
@@ -67,15 +67,6 @@ void merge(int arr[], int low,int mid, int high){
         arr[k] = arr_2[j];
         j++;
         k++;
-    }
-}
-
-void merge_sort(int arr[], int low, int high){
-    if(low < high){
-        int mid = (low + high) / 2;
-        merge_sort(arr, low, mid);
-        merge_sort(arr, mid + 1, high);
-        merge(arr, low, mid, high);
     }
 }
 
@@ -126,7 +117,8 @@ void do_task(int arr[], task_t* task){
         pair<int, int> p;
         p.first = task->low;
         p.second = task->high;
-        merge_sort(arr, task->low, task->high);
+        int mid = (task->low + task->high) / 2;
+        merge(arr, task->low, mid, task->high);
         bool find = false;
         vector<pair<int, int>>::iterator it;
         for(it = vec.begin(); it != vec.end(); it++){  // find relation
@@ -162,8 +154,12 @@ void* start_thread(void* args){
     while(1){
         int *data = (int*)args;
         task_t task;
-        if(add_count == 15 && vec.empty())
+        if(add_count == 15 && vec.empty()){
+            for(int i = 0; i < len; i++)
+                cout << data[i] << " ";
+            cout<< '\n';
             break;
+        }
         pthread_mutex_lock(&lock);
         if(task_queue.size() > 0){
             task = task_queue.front();
@@ -180,7 +176,6 @@ void* start_thread(void* args){
 }
 
 int main(int argc, char* argv[]){
-    int n, len;
     cin >> n >> len;
     int arr[len];
     for(int i = 0; i < len; i++)
@@ -190,32 +185,29 @@ int main(int argc, char* argv[]){
     pthread_mutex_init(&lock, NULL);
     pthread_cond_init(&cond, NULL);
     sem_init(&sem, 0, 0);
-    for(int i = 0; i < n; i++)
-        pthread_create(&threads[i], NULL, &start_thread, arr);
-        
     int remain = len % n, ptr = 0;
-    for(int i = 0; i < n; i++){
+    for(int i = 0; i < 8; i++){
         task_t task;
         task.id = 0;
         task.low = ptr;
         if(remain != 0){
-            ptr += len / n + 1;
+            ptr += len / 8 + 1;
             remain--;
         }
         else
-            ptr += len / n;
+            ptr += len / 8;
         task.high = ptr - 1;
         add_task(arr, task);
     }
     for(int i = 0; i < n; i++)
+        pthread_create(&threads[i], NULL, &start_thread, arr);
+    for(int i = 0; i < n; i++)
         pthread_join(threads[i], NULL);
+        
     pthread_mutex_destroy(&lock);
     pthread_cond_destroy(&cond);
     sem_destroy(&sem);
     vec.clear();
-    for(int i = 0; i < len; i++)
-        cout << arr[i] << " ";
-    cout<< '\n';
     
     return 0;
 }
