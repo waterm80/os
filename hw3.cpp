@@ -10,35 +10,33 @@ repository or a public web page.
 #include <iostream>
 #include <pthread.h>
 #include <semaphore.h>
+#include <sys/time.h>
+#include <fstream>
+#include <unistd.h>
+#include <sstream>
+#include <iomanip>
 #include <condition_variable>
-#include <sys/times.h>
-#include <queue>
-#include <utility>
-#include <vector>
 using namespace std;
 
 typedef struct{
-    int id, low, high;
+    int type, low, high, id, mid;
 }task_t;
 
-int n, len, add_count;
-queue<task_t> task_queue;
-vector<pair<int, int>> vec;
-pthread_mutex_t lock;
-pthread_cond_t cond;
-sem_t sem;
+int len, add_count, arr[1000005], task_count, complete_count;
+task_t task_queue[15], complete[15];
+sem_t add, r, job, grab;
 
-void bubble_sort(int arr[], int low, int high){
-    for(int i = 0; i <= high - low; i++)
-        for(int j = 0 ; j < high - low - i; j++)
-            if(arr[low + j] > arr[low + j+1]){
-                int tmp = arr[low + j];
-                arr[low + j] = arr[low + j+1];
-                arr[low + j+1] = tmp;
+void bubble_sort(int low, int high){
+    for(int i = 0; i < high - low + 1; i++)
+        for(int j = 0; j < high - low; j++)
+            if(arr[low + i] < arr[low + j]){
+                int tmp = arr[low + i];
+                arr[low + i] = arr[low + j];
+                arr[low + j] = tmp;
             }
 }
 
-void merge(int arr[], int low,int mid, int high){
+void merge(int low, int mid, int high){
     int l1 = mid - low + 1;
     int l2 = high - mid;
     int arr_1[l1], arr_2[l2];
@@ -70,144 +68,130 @@ void merge(int arr[], int low,int mid, int high){
     }
 }
 
-void add_task(int arr[], task_t task){
-    pthread_mutex_lock(&lock);
+void add_task(task_t task){
+    sem_wait(&add);
     add_count++;
-    task_queue.push(task);
-    pthread_mutex_unlock(&lock);
-    pthread_cond_signal(&cond);
+    task_queue[task_count++] = task;
+    sem_post(&add);
+    //sem_post(&job);
 }
 
-void do_task(int arr[], task_t* task){
-    if(task->id == 0){  // bottom 8 tasks
-        pair<int, int> p;
-        p.first = task->low;
-        p.second = task->high;
-        bubble_sort(arr, task->low, task->high);
-        bool find = false;
-        vector<pair<int, int>>::iterator it;
-        for(it = vec.begin(); it != vec.end(); it++){  // find relation
-            if(it->first == task->high + 1){
-                task_t next = {
-                    .id = 1,
-                    .low = task->low,
-                    .high = it->second
-                };
-                vec.erase(it);
-                add_task(arr, next);
-                find = true;
-                break;
-            }
-            else if(it->second == task->low - 1){
-                task_t next = {
-                    .id = 1,
-                    .low = it->first,
-                    .high = task->high
-                };
-                vec.erase(it);
-                add_task(arr, next);
-                find = true;
-                break;
-            }
-        }
-        if(find == false)
-            vec.push_back(p);
-    }
-    else{   // merge
-        pair<int, int> p;
-        p.first = task->low;
-        p.second = task->high;
-        int mid = (task->low + task->high) / 2;
-        merge(arr, task->low, mid, task->high);
-        bool find = false;
-        vector<pair<int, int>>::iterator it;
-        for(it = vec.begin(); it != vec.end(); it++){  // find relation
-            if(it->first == task->high + 1){
-                task_t next = {
-                    .id = 1,
-                    .low = task->low,
-                    .high = it->second
-                };
-                vec.erase(it);
-                add_task(arr, next);
-                find = true;
-                break;
-            }
-            else if(it->second == task->low - 1){
-                task_t next = {
-                    .id = 1,
-                    .low = it->first,
-                    .high = task->high
-                };
-                vec.erase(it);
-                add_task(arr, next);
-                find = true;
-                break;
-            }
-        }
-        if(find == false)
-            vec.push_back(p);
-    }
-}
-
-void* start_thread(void* args){
-    while(1){
-        int *data = (int*)args;
-        task_t task;
-        if(add_count == 15 && vec.empty()){
-            for(int i = 0; i < len; i++)
-                cout << data[i] << " ";
-            cout<< '\n';
+void relation(task_t task){
+    for(int i = 0; i < complete_count; i++){  // find relation 
+        if(complete[i].id != task.id && complete[i].id / 2 == task.id / 2 && add_count < 15){
+            task_t next = {
+                .type = 1,
+                .low = min(task.low, complete[i].low),
+                .high = max(task.high, complete[i].high),
+                .id = task.id / 2 + 8,
+                .mid = -1
+            };
+            if(complete[i].id % 2 == 0)
+                next.mid = complete[i].high;
+            else
+                next.mid = task.high;
+            add_task(next);
             break;
         }
-        pthread_mutex_lock(&lock);
-        if(task_queue.size() > 0){
-            task = task_queue.front();
-            task_queue.pop();
-        }
-        else{
-            pthread_mutex_unlock(&lock);
-            continue;
-        }
-        pthread_mutex_unlock(&lock);
-        do_task(data, &task);
+    } 
+}
+
+void do_task(task_t task){
+    if(task.type == 0){  // bottom 8 tasks
+        bubble_sort(task.low, task.high);
+        sem_wait(&r);
+        complete[complete_count++] = task; 
+        relation(task);
+        sem_post(&r);
     }
+    else{   // merge
+        merge(task.low, task.mid, task.high);
+        sem_wait(&r);
+        complete[complete_count++] = task; 
+        relation(task);
+        sem_post(&r);
+    }
+}
+
+void* start_thread(void*){
+    while(1){
+        task_t task;
+        if(complete_count == 15)
+            break;
+        //sem_wait(&job);
+        if(task_count <= 0)
+            continue;
+        sem_wait(&grab);
+        task = task_queue[0];
+        for(int i = 0; i < task_count; i++)
+            task_queue[i] = task_queue[i+1];
+        task_count--;
+        sem_post(&grab);
+        do_task(task);
+    } 
     pthread_exit(NULL);
 }
 
-int main(int argc, char* argv[]){
-    cin >> n >> len;
-    int arr[len];
+void output(int c){
+    ofstream ofs;
+    stringstream ss;
+    string tmp;
+    ss << c;
+    ss >> tmp;
+    string s = "output_" + tmp + ".txt";
+    ofs.open(s.c_str());
     for(int i = 0; i < len; i++)
-        cin >> arr[i];
-    add_count = 0;
-    pthread_t threads[n];
-    pthread_mutex_init(&lock, NULL);
-    pthread_cond_init(&cond, NULL);
-    sem_init(&sem, 0, 0);
-    int remain = len % n, ptr = 0;
-    for(int i = 0; i < 8; i++){
-        task_t task;
-        task.id = 0;
-        task.low = ptr;
-        if(remain != 0){
-            ptr += len / 8 + 1;
-            remain--;
+        ofs << arr[i] << " ";
+    ofs.close();
+}
+
+int main(int argc, char* argv[]){
+    struct timeval start, end;
+    ifstream ifs;
+    ifs.open("input.txt");
+    ifs >> len;
+    for(int n = 1; n <= 8; n++){
+        gettimeofday(&start, NULL);
+        for(int i = 0; i < len; i++)
+            ifs >> arr[i];
+        add_count = 0;
+        task_count = 0;
+        complete_count = 0;
+        pthread_t threads[n];
+        sem_init(&add, 0, 1);
+        sem_init(&r, 0, 1);
+        //sem_init(&job, 0, 0);
+        sem_init(&grab, 0, 1);
+        int remain = len % 8, ptr = 0;
+        for(int i = 0; i < 8; i++){
+            task_t task;
+            task.id = i;
+            task.low = ptr;
+            task.type = 0;
+            if(remain != 0){
+                ptr += len / 8 + 1;
+                remain--;
+            }
+            else
+                ptr += len / 8;
+            task.high = ptr - 1;
+            task.mid = -1;
+            add_task(task);
         }
-        else
-            ptr += len / 8;
-        task.high = ptr - 1;
-        add_task(arr, task);
+        for(int i = 0; i < n; i++)
+            pthread_create(&threads[i], NULL, start_thread, NULL);
+        for(int i = 0; i < n; i++)
+            pthread_join(threads[i], NULL);
+        sem_destroy(&add);
+        sem_destroy(&r);
+        //sem_destroy(&job);
+        sem_destroy(&grab);
+        gettimeofday(&end, NULL);
+        output(n);
+        int sec = end.tv_sec - start.tv_sec;
+        int usec = end.tv_usec - start.tv_usec;
+        cout << "worker thread #" << n << ", elapsed " << fixed << setprecision(6) << sec * 1000 + (usec / 1000.0) << " ms\n";
     }
-    for(int i = 0; i < n; i++)
-        pthread_create(&threads[i], NULL, &start_thread, arr);
-    for(int i = 0; i < n; i++)
-        pthread_join(threads[i], NULL);
-        
-    pthread_mutex_destroy(&lock);
-    pthread_cond_destroy(&cond);
-    sem_destroy(&sem);
-    vec.clear();
-    
+    ifs.close();
     return 0;
 }
